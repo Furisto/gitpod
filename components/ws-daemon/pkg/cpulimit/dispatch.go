@@ -227,8 +227,10 @@ func newCFSController(basePath, cgroupPath string) (CFSController, error) {
 
 	switch {
 	case err == nil:
+		log.Info("Using cgroup v2 cfs controller for cpu limiting")
 		return CgroupV2CFSController(filepath.Join(basePath, cgroupPath)), nil
 	case err == os.ErrNotExist:
+		log.Info("Using cgroup v1 cfs controller for cpu limiting")
 		return CgroupV1CFSController(filepath.Join(basePath, "cpu", cgroupPath)), nil
 	default:
 		return nil, err

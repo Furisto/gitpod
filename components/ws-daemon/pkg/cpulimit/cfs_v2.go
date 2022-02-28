@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gitpod-io/gitpod/common-go/log"
 	"golang.org/x/xerrors"
 )
 
@@ -28,12 +29,14 @@ func (basePath CgroupV2CFSController) Usage() (CPUTime, error) {
 }
 
 func (basePath CgroupV2CFSController) SetLimit(limit Bandwidth) (changed bool, err error) {
+	log.Infof("Setting limit to %s, limit is %v", basePath, limit)
 	quota, period, err := basePath.readCpuMax()
 	if err != nil {
 		return false, xerrors.Errorf("failed to read cpu max from %s: %w", basePath, err)
 	}
 
 	target := limit.Quota(period)
+	log.Infof("The target is %v, quota is %v", target.Microseconds(), quota.Microseconds())
 	if quota == target {
 		return false, nil
 	}

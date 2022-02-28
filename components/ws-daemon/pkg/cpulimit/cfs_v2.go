@@ -6,6 +6,7 @@ package cpulimit
 
 import (
 	"bufio"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -67,9 +68,14 @@ func (basePath CgroupV2CFSController) readCpuMax() (time.Duration, time.Duration
 		return 0, 0, xerrors.Errorf("cpu.max did not have expected number of fields: %s", parts)
 	}
 
-	quota, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil {
-		return 0, 0, xerrors.Errorf("could not parse quota of %s: %w", parts[0], err)
+	var quota int64
+	if parts[0] == "max" {
+		quota = math.MaxInt64
+	} else {
+		quota, err = strconv.ParseInt(parts[0], 10, 64)
+		if err != nil {
+			return 0, 0, xerrors.Errorf("could not parse quota of %s: %w", parts[0], err)
+		}
 	}
 
 	period, err := strconv.ParseInt(parts[1], 10, 64)

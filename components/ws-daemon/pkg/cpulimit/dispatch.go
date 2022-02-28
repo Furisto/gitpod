@@ -6,6 +6,7 @@ package cpulimit
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -97,7 +98,7 @@ type DispatchListener struct {
 }
 
 type workspace struct {
-	CFS       CgroupV1CFSController
+	CFS       CFSController
 	OWI       logrus.Fields
 	HardLimit ResourceLimiter
 
@@ -175,8 +176,13 @@ func (d *DispatchListener) WorkspaceAdded(ctx context.Context, ws *dispatch.Work
 		return xerrors.Errorf("cannot start governer: %w", err)
 	}
 
+	controller, err := newCFSController(d.Config.CGroupBasePath, cgroupPath)
+	if err != nil {
+		return err
+	}
+
 	d.workspaces[ws.InstanceID] = &workspace{
-		CFS: CgroupV1CFSController(filepath.Join(d.Config.CGroupBasePath, "cpu", cgroupPath)),
+		CFS: controller,
 		OWI: ws.OWI(),
 	}
 	go func() {
@@ -213,4 +219,18 @@ func (d *DispatchListener) WorkspaceUpdated(ctx context.Context, ws *dispatch.Wo
 	}
 
 	return nil
+}
+
+func newCFSController(basePath, cgroupPath string) (CFSController, error) {
+	controllers := filepath.Join(basePath, "cgroup.controllers")
+	_, err := os.Stat(controllers)
+
+	switch {
+	case err == nil:
+		return CgroupV2CFSController(filepath.Join(basePath, cgroupPath)), nil
+	case err == os.ErrNotExist:
+		return CgroupV1CFSController(filepath.Join(basePath, "cpu", cgroupPath)), nil
+	default:
+		return nil, err
+	}
 }

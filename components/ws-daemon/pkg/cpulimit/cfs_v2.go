@@ -20,6 +20,7 @@ import (
 type CgroupV2CFSController string
 
 func (basePath CgroupV2CFSController) Usage() (CPUTime, error) {
+
 	usage, err := basePath.getFlatKeyedValue("usage_usec")
 	if err != nil {
 		return 0, err

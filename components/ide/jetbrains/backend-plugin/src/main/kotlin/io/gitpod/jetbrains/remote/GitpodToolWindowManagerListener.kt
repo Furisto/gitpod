@@ -10,7 +10,6 @@ import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.openapi.wm.ex.ToolWindowManagerListener
-import com.jetbrains.rdserver.terminal.BackendTerminalManager
 import io.gitpod.supervisor.api.TerminalOuterClass
 import io.gitpod.supervisor.api.TerminalServiceGrpc
 import io.grpc.stub.StreamObserver
@@ -22,7 +21,9 @@ import org.jetbrains.plugins.terminal.TerminalToolWindowFactory
 import org.jetbrains.plugins.terminal.TerminalView
 import org.jetbrains.plugins.terminal.cloud.CloudTerminalProcess
 import org.jetbrains.plugins.terminal.cloud.CloudTerminalRunner
-import java.io.*
+import java.io.ByteArrayOutputStream
+import java.io.PipedInputStream
+import java.io.PipedOutputStream
 
 @DelicateCoroutinesApi
 @Suppress("UnstableApiUsage")
@@ -37,7 +38,6 @@ class GitpodToolWindowManagerListener(private val project: Project) : ToolWindow
     }
 
     private val terminalView = TerminalView.getInstance(project)
-    private val backendTerminalManager = BackendTerminalManager.getInstance(project)
     private val terminalServiceStub = TerminalServiceGrpc.newStub(GitpodManager.supervisorChannel)
     private val terminalServiceFutureStub = TerminalServiceGrpc.newFutureStub(GitpodManager.supervisorChannel)
 
@@ -59,7 +59,8 @@ class GitpodToolWindowManagerListener(private val project: Project) : ToolWindow
             terminalView.toolWindow.contentManager.getContent(widget).tabName == supervisorTerminal.title
         } as ShellTerminalWidget
         connectSupervisorStream(shellTerminalWidget, supervisorTerminal, terminalOutputWriter, terminalInputWriter)
-        backendTerminalManager.shareTerminal(shellTerminalWidget, supervisorTerminal.alias)
+        // "Share Terminal" feature currently doesn't work when using CloudTerminalRunner.
+        // BackendTerminalManager.getInstance(project).shareTerminal(shellTerminalWidget, supervisorTerminal.alias)
     }
 
     private fun connectSupervisorStream(shellTerminalWidget: ShellTerminalWidget, supervisorTerminal: TerminalOuterClass.Terminal, terminalOutputWriter: PipedOutputStream, terminalInputWriter: ByteArrayOutputStream) {
@@ -128,7 +129,7 @@ class GitpodToolWindowManagerListener(private val project: Project) : ToolWindow
                 .newBuilder()
                 .setAlias(supervisorTerminal.alias)
 
-        GlobalScope.launch {
+        val watchTerminalInputJob = GlobalScope.launch {
             while (isActive) {
                 withContext(Dispatchers.IO) {
                     when {
@@ -141,6 +142,13 @@ class GitpodToolWindowManagerListener(private val project: Project) : ToolWindow
                     }
                 }
             }
+        }
+
+        shellTerminalWidget.addListener {
+            debug("Terminal '${supervisorTerminal.title}' was closed on IDE")
+            watchTerminalInputJob.cancel()
+            val shutdownTerminalRequest = TerminalOuterClass.ShutdownTerminalRequest.newBuilder().setAlias(supervisorTerminal.alias).build()
+            terminalServiceStub.shutdown(shutdownTerminalRequest, null)
         }
     }
 

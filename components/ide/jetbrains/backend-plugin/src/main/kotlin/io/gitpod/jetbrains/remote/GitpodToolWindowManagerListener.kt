@@ -10,6 +10,9 @@ import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.openapi.wm.ex.ToolWindowManagerListener
+import com.jediterm.terminal.TtyConnector
+import com.jetbrains.rdserver.terminal.BackendTerminalManager
+import com.jetbrains.rdserver.terminal.BackendTtyConnector
 import io.gitpod.supervisor.api.TerminalOuterClass
 import io.gitpod.supervisor.api.TerminalServiceGrpc
 import io.grpc.stub.StreamObserver
@@ -53,14 +56,17 @@ class GitpodToolWindowManagerListener(private val project: Project) : ToolWindow
         val terminalInputWriter = ByteArrayOutputStream()
         val terminalOutputReader = PipedInputStream()
         val terminalOutputWriter = PipedOutputStream(terminalOutputReader)
-        val runner = CloudTerminalRunner(project, supervisorTerminal.title, CloudTerminalProcess(terminalInputWriter, terminalOutputReader))
-        terminalView.createNewSession(runner, TerminalTabState().also { it.myTabName = supervisorTerminal.title })
+        val terminalRunner = object: CloudTerminalRunner(project, supervisorTerminal.title, CloudTerminalProcess(terminalInputWriter, terminalOutputReader)) {
+            override fun createTtyConnector(process: CloudTerminalProcess): TtyConnector {
+                return BackendTtyConnector(project, super.createTtyConnector(process))
+            }
+        }
+        terminalView.createNewSession(terminalRunner, TerminalTabState().also { it.myTabName = supervisorTerminal.title })
         val shellTerminalWidget = terminalView.widgets.find { widget ->
             terminalView.toolWindow.contentManager.getContent(widget).tabName == supervisorTerminal.title
         } as ShellTerminalWidget
+        BackendTerminalManager.getInstance(project).shareTerminal(shellTerminalWidget, supervisorTerminal.alias)
         connectSupervisorStream(shellTerminalWidget, supervisorTerminal, terminalOutputWriter, terminalInputWriter)
-        // "Share Terminal" feature currently doesn't work when using CloudTerminalRunner.
-        // BackendTerminalManager.getInstance(project).shareTerminal(shellTerminalWidget, supervisorTerminal.alias)
     }
 
     private fun connectSupervisorStream(shellTerminalWidget: ShellTerminalWidget, supervisorTerminal: TerminalOuterClass.Terminal, terminalOutputWriter: PipedOutputStream, terminalInputWriter: ByteArrayOutputStream) {

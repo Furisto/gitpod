@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	common_grpc "github.com/gitpod-io/gitpod/common-go/grpc"
 	"github.com/gitpod-io/gitpod/common-go/log"
@@ -165,12 +166,16 @@ func (o *Orchestrator) ResolveWorkspaceImage(ctx context.Context, req *protocol.
 	defer tracing.FinishSpan(span, &err)
 	tracing.LogRequestSafe(span, req)
 
+	reqs, _ := protojson.Marshal(req)
+	safeReqs, _ := log.RedactJSON(reqs)
+	log.WithField("req", safeReqs).Debug("ResolveWorkspaceImage")
+
 	reqauth := o.AuthResolver.ResolveRequestAuth(req.Auth)
 	baseref, err := o.getBaseImageRef(ctx, req.Source, reqauth)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "cannot resolve base image: %s", err.Error())
 	}
-	refstr, err := o.getWorkspaceImageRef(ctx, baseref, reqauth)
+	refstr, err := o.getWorkspaceImageRef(ctx, baseref)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "cannot produce image ref: %v", err)
 	}
@@ -178,7 +183,7 @@ func (o *Orchestrator) ResolveWorkspaceImage(ctx context.Context, req *protocol.
 
 	// to check if the image exists we must have access to the image caching registry and the refstr we check here does not come
 	// from the user. Thus we can safely use auth.AllowedAuthForAll here.
-	auth, err := auth.AllowedAuthForAll.GetAuthFor(o.Auth, refstr)
+	auth, err := auth.AllowedAuthForAll().GetAuthFor(o.Auth, refstr)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "cannot get workspace image authentication: %v", err)
 	}
@@ -221,11 +226,11 @@ func (o *Orchestrator) Build(req *protocol.BuildRequest, resp protocol.ImageBuil
 	if err != nil {
 		return status.Errorf(codes.Internal, "cannot resolve base image: %q", err)
 	}
-	wsrefstr, err := o.getWorkspaceImageRef(ctx, baseref, reqauth)
+	wsrefstr, err := o.getWorkspaceImageRef(ctx, baseref)
 	if err != nil {
 		return status.Errorf(codes.Internal, "cannot produce workspace image ref: %q", err)
 	}
-	wsrefAuth, err := auth.AllowedAuthForAll.GetAuthFor(o.Auth, wsrefstr)
+	wsrefAuth, err := auth.AllowedAuthForAll().GetAuthFor(o.Auth, wsrefstr)
 	if err != nil {
 		return status.Errorf(codes.Internal, "cannot get workspace image authentication: %q", err)
 	}
@@ -238,7 +243,7 @@ func (o *Orchestrator) Build(req *protocol.BuildRequest, resp protocol.ImageBuil
 	if exists && !req.GetForceRebuild() {
 		// If the workspace image exists, so should the baseimage if we've built it.
 		// If we didn't build it and the base image doesn't exist anymore, getWorkspaceImageRef will have failed to resolve the baseref.
-		baserefAbsolute, err := o.getAbsoluteImageRef(ctx, baseref, auth.AllowedAuthForAll)
+		baserefAbsolute, err := o.getAbsoluteImageRef(ctx, baseref, auth.AllowedAuthForAll())
 		if err != nil {
 			return status.Errorf(codes.Internal, "cannot resolve base image ref: %q", err)
 		}
@@ -592,7 +597,7 @@ func (o *Orchestrator) getBaseImageRef(ctx context.Context, bs *protocol.BuildSo
 	}
 }
 
-func (o *Orchestrator) getWorkspaceImageRef(ctx context.Context, baseref string, allowedAuth auth.AllowedAuthFor) (ref string, err error) {
+func (o *Orchestrator) getWorkspaceImageRef(ctx context.Context, baseref string) (ref string, err error) {
 	cnt := []byte(fmt.Sprintf("%s\n%d\n", baseref, workspaceBuildProcessVersion))
 	hash := sha256.New()
 	n, err := hash.Write(cnt)

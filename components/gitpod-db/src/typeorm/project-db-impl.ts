@@ -162,11 +162,9 @@ export class ProjectDBImpl implements ProjectDB {
         });
     }
 
-    public async getProjectEnvironmentVariables(projectId: string): Promise<ProjectEnvVar[]> {
+    public async getProjectEnvironmentVariables(projectId: string): Promise<ProjectEnvVarWithValue[]> {
         const envVarRepo = await this.getProjectEnvVarRepo();
-        const envVarsWithValue = await envVarRepo.find({ projectId, deleted: false });
-        const envVars = envVarsWithValue.map(toProjectEnvVar);
-        return envVars;
+        return await envVarRepo.find({ projectId, deleted: false });
     }
 
     public async getProjectEnvironmentVariableById(variableId: string): Promise<ProjectEnvVar | undefined> {

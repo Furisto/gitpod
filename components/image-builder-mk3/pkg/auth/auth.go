@@ -67,16 +67,16 @@ type Authentication types.AuthConfig
 
 // AllowedAuthFor describes for which repositories authentication may be provided for
 type AllowedAuthFor struct {
-	All      bool
-	Explicit []string
+	All        bool
+	Explicit   []string
+	Additional map[string]string
 }
 
-var (
-	// AllowedAuthForAll means auth for all repositories is allowed
-	AllowedAuthForAll AllowedAuthFor = AllowedAuthFor{true, nil}
-	// AllowedAuthForNone means auth for no repositories is allowed
-	AllowedAuthForNone AllowedAuthFor = AllowedAuthFor{false, nil}
-)
+// AllowedAuthForAll means auth for all repositories is allowed
+func AllowedAuthForAll() AllowedAuthFor { return AllowedAuthFor{true, nil, nil} }
+
+// AllowedAuthForNone means auth for no repositories is allowed
+func AllowedAuthForNone() AllowedAuthFor { return AllowedAuthFor{false, nil, nil} }
 
 // IsAllowNone returns true if we are to allow authentication for no repos
 func (a AllowedAuthFor) IsAllowNone() bool {
@@ -96,7 +96,7 @@ func (a AllowedAuthFor) Elevate(ref string) AllowedAuthFor {
 		return a
 	}
 
-	return AllowedAuthFor{a.All, append(a.Explicit, reference.Domain(pref))}
+	return AllowedAuthFor{a.All, append(a.Explicit, reference.Domain(pref)), a.Additional}
 }
 
 // ExplicitlyAll produces an AllowedAuthFor that allows authentication for all
@@ -117,7 +117,7 @@ type Resolver struct {
 // ResolveRequestAuth computes the allowed authentication for a build based on its request
 func (r Resolver) ResolveRequestAuth(auth *api.BuildRegistryAuth) (authFor AllowedAuthFor) {
 	// by default we allow nothing
-	authFor = AllowedAuthForNone
+	authFor = AllowedAuthForNone()
 	if auth == nil {
 		return
 	}
@@ -125,9 +125,9 @@ func (r Resolver) ResolveRequestAuth(auth *api.BuildRegistryAuth) (authFor Allow
 	switch ath := auth.Mode.(type) {
 	case *api.BuildRegistryAuth_Total:
 		if ath.Total.AllowAll {
-			authFor = AllowedAuthForAll
+			authFor = AllowedAuthForAll()
 		} else {
-			authFor = AllowedAuthForNone
+			authFor = AllowedAuthForNone()
 		}
 	case *api.BuildRegistryAuth_Selective:
 		var explicit []string
@@ -140,10 +140,13 @@ func (r Resolver) ResolveRequestAuth(auth *api.BuildRegistryAuth) (authFor Allow
 			explicit = append(explicit, reference.Domain(ref))
 		}
 		explicit = append(explicit, ath.Selective.AnyOf...)
-		authFor = AllowedAuthFor{false, explicit}
+		authFor = AllowedAuthFor{false, explicit, nil}
 	default:
-		authFor = AllowedAuthForNone
+		authFor = AllowedAuthForNone()
 	}
+
+	authFor.Additional = auth.Additional
+
 	return
 }
 
@@ -156,6 +159,14 @@ func (a AllowedAuthFor) GetAuthFor(auth RegistryAuthenticator, refstr string) (r
 	ref, err := reference.ParseNormalizedNamed(refstr)
 	if err != nil {
 		return nil, xerrors.Errorf("cannot parse image ref: %v", err)
+	}
+
+	// if the ref refers to additional auth, let's grant it straight away
+	// TODO(cw): we need to special case the base/target ref
+	if res, ok := a.Additional[reference.Domain(ref)+reference.Path(ref)]; ok {
+		return &Authentication{
+			Auth: res,
+		}, nil
 	}
 
 	reg := reference.Domain(ref)

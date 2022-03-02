@@ -5,7 +5,7 @@
  */
 
 import { DBWithTracing, TracedWorkspaceDB, WorkspaceDB } from '@gitpod/gitpod-db/lib';
-import { CommitContext, Project, ProjectEnvVar, StartPrebuildContext, StartPrebuildResult, TaskConfig, User, WorkspaceConfig, WorkspaceInstance } from '@gitpod/gitpod-protocol';
+import { CommitContext, Project, ProjectEnvVarWithValue, StartPrebuildContext, StartPrebuildResult, TaskConfig, User, WorkspaceConfig, WorkspaceInstance } from '@gitpod/gitpod-protocol';
 import { log } from '@gitpod/gitpod-protocol/lib/util/logging';
 import { TraceContext } from '@gitpod/gitpod-protocol/lib/util/tracing';
 import { inject, injectable } from 'inversify';
@@ -162,7 +162,7 @@ export class PrebuildManager {
             if (!prebuild) {
                 throw new Error('No prebuild found for workspace ' + workspaceId);
             }
-            let projectEnvVars: ProjectEnvVar[] = [];
+            let projectEnvVars: ProjectEnvVarWithValue[] = [];
             if (workspace.projectId) {
                 projectEnvVars = await this.projectService.getProjectEnvironmentVariables(workspace.projectId);
             }

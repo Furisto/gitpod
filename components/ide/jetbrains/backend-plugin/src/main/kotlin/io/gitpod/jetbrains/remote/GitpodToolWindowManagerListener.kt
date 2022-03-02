@@ -1,3 +1,7 @@
+// Copyright (c) 2022 Gitpod GmbH. All rights reserved.
+// Licensed under the GNU Affero General Public License (AGPL).
+// See License-AGPL.txt in the project root for license information.
+
 package io.gitpod.jetbrains.remote
 
 import com.intellij.openapi.application.runInEdt
@@ -5,32 +9,30 @@ import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.openapi.wm.ex.ToolWindowManagerListener
-import com.jediterm.terminal.Questioner
-import com.jediterm.terminal.TtyConnector
 import com.jetbrains.rdserver.terminal.BackendTerminalManager
+import com.pty4j.PtyProcessBuilder
 import io.gitpod.supervisor.api.TerminalOuterClass
 import io.gitpod.supervisor.api.TerminalServiceGrpc
 import io.grpc.stub.StreamObserver
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.*
 import kotlinx.coroutines.guava.asDeferred
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import org.jetbrains.plugins.terminal.ShellTerminalWidget
+import org.jetbrains.plugins.terminal.TerminalTabState
 import org.jetbrains.plugins.terminal.TerminalToolWindowFactory
 import org.jetbrains.plugins.terminal.TerminalView
-import java.io.*
-import java.nio.charset.Charset
+import org.jetbrains.plugins.terminal.cloud.CloudTerminalProcess
+import org.jetbrains.plugins.terminal.cloud.CloudTerminalRunner
+import java.io.PipedInputStream
+import java.io.PipedOutputStream
 
-
+@DelicateCoroutinesApi
 @Suppress("UnstableApiUsage")
 class GitpodToolWindowManagerListener(private val project: Project) : ToolWindowManagerListener {
     override fun toolWindowsRegistered(ids: MutableList<String>, toolWindowManager: ToolWindowManager) {
         if (ids.contains(TerminalToolWindowFactory.TOOL_WINDOW_ID)) {
             debug("ToolWindow '${TerminalToolWindowFactory.TOOL_WINDOW_ID}' has been registered on project '${project.name}'.")
-            runBlocking {
-                launch {
-                    mirrorSupervisorTerminals()
-                }
+            GlobalScope.launch {
+                mirrorSupervisorTerminals()
             }
         }
     }
@@ -49,63 +51,64 @@ class GitpodToolWindowManagerListener(private val project: Project) : ToolWindow
 
     private fun createSharedTerminal(supervisorTerminal: TerminalOuterClass.Terminal) = runInEdt {
         debug("Creating shared terminal '${supervisorTerminal.title}' on Backend IDE")
-        val inputStream = ByteArrayInputStream(ByteArray(4096))
-        val outputStream = ByteArrayOutputStream()
-        val shellTerminalWidget = terminalView.createLocalShellWidget(project.basePath, supervisorTerminal.title, true)
-        shellTerminalWidget.ttyConnector = object : TtyConnector {
-            private val inputStreamReader: InputStreamReader = InputStreamReader(inputStream)
+        val terminalInputReader = PipedInputStream()
+        val terminalInputWriter = PipedOutputStream(terminalInputReader)
+        val terminalOutputReader = PipedInputStream()
+        val terminalOutputWriter = PipedOutputStream(terminalOutputReader)
 
-            override fun init(q: Questioner): Boolean {
-                return true
-            }
+//        val process = PtyProcessBuilder()
+//                .setCommand(arrayOf("/bin/bash", "-l"))
+//                .setEnvironment(mutableMapOf("TERM" to "xterm"))
+//                .start()
+//        val terminalInputWriter = process.outputStream
+//        val terminalOutputReader = process.inputStream
 
-            override fun close() {
-                try {
-                    outputStream.close()
-                    inputStream.close()
-                } catch (e: Exception) {
-                    throw RuntimeException("Unable to close streams.", e)
-                }
-            }
+        val runner = CloudTerminalRunner(project, supervisorTerminal.title, CloudTerminalProcess(terminalInputWriter, terminalOutputReader))
+        terminalView.createNewSession(runner, TerminalTabState().also { it.myTabName = supervisorTerminal.title })
+        val shellTerminalWidget = terminalView.widgets.find { widget ->
+            terminalView.toolWindow.contentManager.getContent(widget).tabName == supervisorTerminal.title
+        } as ShellTerminalWidget
+//        Sharing terminal feature is not working when using CloudTerminalProcess:
+//        backendTerminalManager.shareTerminal(shellTerminalWidget, supervisorTerminal.alias)
+        connectSupervisorStream(shellTerminalWidget, supervisorTerminal, terminalOutputWriter)
 
-            override fun getName(): String {
-                return "TtyConnector"
-            }
-
-            @Throws(IOException::class)
-            override fun read(buf: CharArray, offset: Int, length: Int): Int {
-                return inputStreamReader.read(buf, offset, length)
-            }
-
-            @Throws(IOException::class)
-            override fun write(bytes: ByteArray) {
-                outputStream.write(bytes)
-                outputStream.flush()
-            }
-
-            override fun isConnected(): Boolean {
-                return true
-            }
-
-            @Throws(IOException::class)
-            override fun write(string: String) {
-                write(string.toByteArray(Charset.defaultCharset()))
-            }
-
-            override fun waitFor(): Int {
-                return 0
-            }
-
-            override fun ready(): Boolean {
-                return true
-            }
-        }
-
-        backendTerminalManager.shareTerminal(shellTerminalWidget, supervisorTerminal.alias)
-        connectSupervisorStream(shellTerminalWidget, supervisorTerminal, outputStream)
+//        GlobalScope.launch {
+//            while (isActive) {
+//                withContext(Dispatchers.IO) {
+//                    if (terminalOutputReader.available() > 363) {
+//                        terminalOutputWriter.write(terminalOutputReader.readBytes())
+//                        debug(terminalOutputReader.available().toString())
+//                        val line = terminalOutputReader.bufferedReader().readLine()
+//                        if (line != null) {
+//                            debug(line)
+//                        }
+//                    }
+//
+//                val writeTerminalRequest = TerminalOuterClass.WriteTerminalRequest.newBuilder().setAlias(supervisorTerminal.alias).setStdin(ByteString.readFrom(input)).build()
+//                val terminalResponseObserver = object : StreamObserver<TerminalOuterClass.WriteTerminalResponse> {
+//                    override fun onNext(response: TerminalOuterClass.WriteTerminalResponse?) {
+//                        if (response != null) {
+//                            debug("bytesWritten = ${response.bytesWritten}")
+//                        }
+//                    }
+//
+//                    override fun onError(e: Throwable?) {
+//                        debug("'${supervisorTerminal.title}' terminal threw error: ${e?.message}.")
+//                    }
+//
+//                    override fun onCompleted() {
+//                        debug("'${supervisorTerminal.title}' terminal finished writing stream.")
+//                    }
+//
+//                }
+//
+//                terminalServiceStub.write(writeTerminalRequest, terminalResponseObserver)
+//                }
+//            }
+//        }
     }
 
-    private fun connectSupervisorStream(shellTerminalWidget: ShellTerminalWidget, supervisorTerminal: TerminalOuterClass.Terminal, outputStream: OutputStream) {
+    private fun connectSupervisorStream(shellTerminalWidget: ShellTerminalWidget, supervisorTerminal: TerminalOuterClass.Terminal, terminalOutputWriter: PipedOutputStream) {
         val listenTerminalRequest = TerminalOuterClass.ListenTerminalRequest.newBuilder().setAlias(supervisorTerminal.alias).build()
 
         val terminalResponseObserver = object : StreamObserver<TerminalOuterClass.ListenTerminalResponse> {
@@ -122,8 +125,12 @@ class GitpodToolWindowManagerListener(private val project: Project) : ToolWindow
                         }
 
                         response.hasData() -> {
-                            debug("Printing '${response.data.toStringUtf8()}' on '${supervisorTerminal.title}' terminal.")
-                            outputStream.write(response.data.toByteArray())
+                            debug("Printing a text on '${supervisorTerminal.title}' terminal.")
+                            GlobalScope.launch {
+                                withContext(Dispatchers.IO) {
+                                    terminalOutputWriter.write(response.data.toByteArray())
+                                }
+                            }
                         }
 
                         response.hasExitCode() -> {
@@ -135,7 +142,7 @@ class GitpodToolWindowManagerListener(private val project: Project) : ToolWindow
             }
 
             override fun onCompleted() {
-                debug("'${supervisorTerminal.title}' terminal finished streaming.")
+                debug("'${supervisorTerminal.title}' terminal finished reading stream.")
             }
 
             override fun onError(e: Throwable?) {

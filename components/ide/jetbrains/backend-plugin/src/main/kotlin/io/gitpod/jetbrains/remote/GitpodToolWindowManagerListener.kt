@@ -24,7 +24,6 @@ import org.jetbrains.plugins.terminal.TerminalToolWindowFactory
 import org.jetbrains.plugins.terminal.TerminalView
 import org.jetbrains.plugins.terminal.cloud.CloudTerminalProcess
 import org.jetbrains.plugins.terminal.cloud.CloudTerminalRunner
-import java.io.ByteArrayOutputStream
 import java.io.PipedInputStream
 import java.io.PipedOutputStream
 
@@ -53,10 +52,11 @@ class GitpodToolWindowManagerListener(private val project: Project) : ToolWindow
 
     private fun createSharedTerminal(supervisorTerminal: TerminalOuterClass.Terminal) = runInEdt {
         debug("Creating shared terminal '${supervisorTerminal.title}' on Backend IDE")
-        val terminalInputWriter = ByteArrayOutputStream()
+        val terminalInputReader = PipedInputStream()
+        val terminalInputWriter = PipedOutputStream(terminalInputReader)
         val terminalOutputReader = PipedInputStream()
         val terminalOutputWriter = PipedOutputStream(terminalOutputReader)
-        val terminalRunner = object: CloudTerminalRunner(project, supervisorTerminal.title, CloudTerminalProcess(terminalInputWriter, terminalOutputReader)) {
+        val terminalRunner = object : CloudTerminalRunner(project, supervisorTerminal.title, CloudTerminalProcess(terminalInputWriter, terminalOutputReader)) {
             override fun createTtyConnector(process: CloudTerminalProcess): TtyConnector {
                 return BackendTtyConnector(project, super.createTtyConnector(process))
             }
@@ -66,10 +66,10 @@ class GitpodToolWindowManagerListener(private val project: Project) : ToolWindow
             terminalView.toolWindow.contentManager.getContent(widget).tabName == supervisorTerminal.title
         } as ShellTerminalWidget
         BackendTerminalManager.getInstance(project).shareTerminal(shellTerminalWidget, supervisorTerminal.alias)
-        connectSupervisorStream(shellTerminalWidget, supervisorTerminal, terminalOutputWriter, terminalInputWriter)
+        connectSupervisorStream(shellTerminalWidget, supervisorTerminal, terminalOutputWriter, terminalInputReader)
     }
 
-    private fun connectSupervisorStream(shellTerminalWidget: ShellTerminalWidget, supervisorTerminal: TerminalOuterClass.Terminal, terminalOutputWriter: PipedOutputStream, terminalInputWriter: ByteArrayOutputStream) {
+    private fun connectSupervisorStream(shellTerminalWidget: ShellTerminalWidget, supervisorTerminal: TerminalOuterClass.Terminal, terminalOutputWriter: PipedOutputStream, terminalInputReader: PipedInputStream) {
         val listenTerminalRequest = TerminalOuterClass.ListenTerminalRequest.newBuilder().setAlias(supervisorTerminal.alias).build()
 
         val terminalResponseObserver = object : StreamObserver<TerminalOuterClass.ListenTerminalResponse> {
@@ -90,6 +90,7 @@ class GitpodToolWindowManagerListener(private val project: Project) : ToolWindow
                             GlobalScope.launch {
                                 withContext(Dispatchers.IO) {
                                     terminalOutputWriter.write(response.data.toByteArray())
+                                    terminalOutputWriter.flush()
                                 }
                             }
                         }
@@ -136,15 +137,19 @@ class GitpodToolWindowManagerListener(private val project: Project) : ToolWindow
                 .setAlias(supervisorTerminal.alias)
 
         val watchTerminalInputJob = GlobalScope.launch {
-            while (isActive) {
-                withContext(Dispatchers.IO) {
-                    when {
-                        terminalInputWriter.size() > 0 -> {
-                            val stdin = ByteString.copyFrom(terminalInputWriter.toByteArray())
-                            terminalInputWriter.reset()
-                            val writeTerminalRequest = writeTerminalRequestBuilder.setStdin(stdin).build()
-                            terminalServiceStub.write(writeTerminalRequest, writeTerminalResponseObserver)
-                        }
+            withContext(Dispatchers.IO) {
+                while (isActive) {
+                    val bytesAvailableOnTerminalInput = terminalInputReader.available()
+
+                    if (bytesAvailableOnTerminalInput > 0) {
+                        val bytesFromTerminalInput = ByteArray(bytesAvailableOnTerminalInput)
+
+                        terminalInputReader.read(bytesFromTerminalInput, 0, bytesFromTerminalInput.size)
+
+                        val supervisorTerminalStdin = ByteString.copyFrom(bytesFromTerminalInput)
+                        val writeTerminalRequest = writeTerminalRequestBuilder.setStdin(supervisorTerminalStdin).build()
+
+                        terminalServiceStub.write(writeTerminalRequest, writeTerminalResponseObserver)
                     }
                 }
             }

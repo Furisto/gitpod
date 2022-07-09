@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 	"unsafe"
 
 	cli "github.com/urfave/cli/v2"
@@ -476,6 +478,39 @@ func main() {
 					return os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0644)
 				},
 			},
+			{
+				Name:  "setup-connection-limit",
+				Usage: "set up network connection rate limiting",
+				Flags: []cli.Flag{
+					&cli.IntFlag{
+						Name:     "limit",
+						Required: true,
+					},
+				},
+				Action: func(c *cli.Context) error {
+					nftcon := nftables.Conn{}
+					limitTable := nftcon.AddTable(&nftables.Table{
+						Family: nftables.TableFamilyIPv4,
+						Name:   "gitpod",
+					})
+
+					_ = nftcon.AddChain(&nftables.Chain{
+						Table:    limitTable,
+						Name:     "ratelimit",
+						Type:     nftables.ChainTypeFilter,
+						Hooknum:  nftables.ChainHookPostrouting,
+						Priority: nftables.ChainPriorityFilter,
+					})
+
+					if err := nftcon.Flush(); err != nil {
+						return xerrors.Errorf("failed to apply connection limit: %v", err)
+					}
+
+					// lib does not support meters, so use nft binary instead
+					connLimit := c.Int("limit")
+					return addConnectionLimitRule(connLimit)
+				},
+			},
 		},
 	}
 
@@ -528,3 +563,16 @@ const (
 	// FlagAtRecursive: Apply to the entire subtree: https://elixir.bootlin.com/linux/latest/source/include/uapi/linux/fcntl.h#L112
 	flagAtRecursive = 0x8000
 )
+
+func addConnectionLimitRule(limit int) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	rule := fmt.Sprintf("add rule ip gitpod ratelimit ip protocol tcp ct state new meter connmeter { ip daddr & 0.0.0.0 timeout 1m limit rate over %d/minute } counter drop", limit)
+
+	cmd := exec.CommandContext(ctx, "nft", rule)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return xerrors.Errorf("run nft failed: %v\n%v", string(output), err)
+	}
+
+	return nil
+}

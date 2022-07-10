@@ -83,7 +83,7 @@ var (
 )
 
 // ServeWorkspace establishes the IWS server for a workspace
-func ServeWorkspace(uidmapper *Uidmapper, fsshift api.FSShiftMethod, cgroupMountPoint string) func(ctx context.Context, ws *session.Workspace) error {
+func ServeWorkspace(uidmapper *Uidmapper, fsshift api.FSShiftMethod, cgroupMountPoint string, connectionLimit int) func(ctx context.Context, ws *session.Workspace) error {
 	return func(ctx context.Context, ws *session.Workspace) (err error) {
 		if _, running := ws.NonPersistentAttrs[session.AttrWorkspaceServer]; running {
 			return nil
@@ -98,6 +98,7 @@ func ServeWorkspace(uidmapper *Uidmapper, fsshift api.FSShiftMethod, cgroupMount
 			Session:          ws,
 			FSShift:          fsshift,
 			CGroupMountPoint: cgroupMountPoint,
+			ConnectionLimit:  connectionLimit,
 		}
 		err = helper.Start()
 		if err != nil {
@@ -138,6 +139,7 @@ type InWorkspaceServiceServer struct {
 	Session          *session.Workspace
 	FSShift          api.FSShiftMethod
 	CGroupMountPoint string
+	ConnectionLimit  int
 
 	srv  *grpc.Server
 	sckt io.Closer
@@ -388,18 +390,8 @@ func (wbs *InWorkspaceServiceServer) SetupPairVeths(ctx context.Context, req *ap
 		return nil, status.Errorf(codes.Internal, "cannot enable IP forwarding")
 	}
 
-	nft, err := exec.LookPath("nft")
-	if err == nil {
-		log.Infof("iws Found nft executable: %v", nft)
-	}
-
-	err = os.WriteFile("iws-file", []byte("iws"), 0644)
-	if err != nil {
-		log.Infof("could not write iws file: %v", err)
-	}
-
 	err = nsinsider(wbs.Session.InstanceID, int(containerPID), func(c *exec.Cmd) {
-		c.Args = append(c.Args, "setup-connection-limit", "--limit", "150")
+		c.Args = append(c.Args, "setup-connection-limit", "--limit", strconv.Itoa(wbs.ConnectionLimit))
 	}, enterMountNS(false), enterNetNS(true))
 	if err != nil {
 		log.WithError(err).WithFields(wbs.Session.OWI()).Error("SetupPairVeths: cannot enable connection limiting")

@@ -22,7 +22,7 @@ import (
 func workspaceLifecycleHooks(cfg Config, kubernetesNamespace string, workspaceExistenceCheck WorkspaceExistenceCheck, uidmapper *iws.Uidmapper, xfs *quota.XFS, cgroupMountPoint string) map[session.WorkspaceState][]session.WorkspaceLivecycleHook {
 	// startIWS starts the in-workspace service for a workspace. This lifecycle hook is idempotent, hence can - and must -
 	// be called on initialization and ready. The on-ready hook exists only to support ws-daemon restarts.
-	startIWS := iws.ServeWorkspace(uidmapper, api.FSShiftMethod(cfg.UserNamespaces.FSShift), cgroupMountPoint)
+	startIWS := iws.ServeWorkspace(uidmapper, api.FSShiftMethod(cfg.UserNamespaces.FSShift), cgroupMountPoint, cfg.Network.ConnectionsPerMinute)
 
 	return map[session.WorkspaceState][]session.WorkspaceLivecycleHook{
 		session.WorkspaceInitializing: {

@@ -39,6 +39,9 @@ type Config struct {
 
 	// Initializer configures the isolated content initializer runtime
 	Initializer InitializerConfig `json:"initializer"`
+
+	// Network configures the networking of the workspace
+	Network NetworkConfig `json:"netLimit"`
 }
 
 type BackupConfig struct {
@@ -56,6 +59,10 @@ type BackupConfig struct {
 
 type UserNamespacesConfig struct {
 	FSShift FSShiftMethod `json:"fsShift"`
+}
+
+type NetworkConfig struct {
+	ConnectionsPerMinute int `json:"connectionsPerMinute"`
 }
 
 type FSShiftMethod api.FSShiftMethod

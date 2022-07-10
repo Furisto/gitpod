@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
 	"time"
 	"unsafe"
 
@@ -506,7 +507,40 @@ func main() {
 						return xerrors.Errorf("failed to apply connection limit: %v", err)
 					}
 
-					// lib does not support meters, so use nft binary instead
+					if err := os.WriteFile("marker-file", []byte("marker"), 0644); err != nil {
+						return xerrors.Errorf("could not write marker file")
+					}
+
+					nft, err := exec.LookPath("nft")
+					if err == nil {
+						log.Infof("Found nft executable: %v", nft)
+					} else {
+						log.Info("nft not found")
+					}
+
+					cwd, err := os.Getwd()
+					if err == nil {
+						log.Infof("Working dir is %v", cwd)
+					}
+
+					exec, err := os.Executable()
+					if err != nil {
+						log.Infof("Executable is %v", exec)
+					}
+
+					if _, err := os.Stat("/usr/sbin"); err == nil {
+						dirs, err := os.ReadDir(cwd)
+						if err == nil {
+							for _, d := range dirs {
+								log.Infof("Entry: %v", d.Name())
+							}
+						}
+					}
+
+					if s, err := os.Stat("/usr/sbin/nft"); err == nil {
+						log.Infof("nft does exist %v", s.Name())
+					}
+
 					connLimit := c.Int("limit")
 					return addConnectionLimitRule(connLimit)
 				},
@@ -569,7 +603,8 @@ func addConnectionLimitRule(limit int) error {
 	defer cancel()
 	rule := fmt.Sprintf("add rule ip gitpod ratelimit ip protocol tcp ct state new meter connmeter { ip daddr & 0.0.0.0 timeout 1m limit rate over %d/minute } counter drop", limit)
 
-	cmd := exec.CommandContext(ctx, "nft", rule)
+	// the go library does not support meters, so use nft instead
+	cmd := exec.CommandContext(ctx, "/usr/sbin/nft", rule)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return xerrors.Errorf("run nft failed: %v\n%v", string(output), err)
 	}

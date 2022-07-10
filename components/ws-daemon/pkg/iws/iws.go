@@ -388,13 +388,23 @@ func (wbs *InWorkspaceServiceServer) SetupPairVeths(ctx context.Context, req *ap
 		return nil, status.Errorf(codes.Internal, "cannot enable IP forwarding")
 	}
 
-	// err = nsinsider(wbs.Session.InstanceID, int(containerPID), func(c *exec.Cmd) {
-	// 	c.Args = append(c.Args, "setup-connection-limit", "--limit", "50")
-	// }, enterMountNS(false), enterNetNS(true))
-	// if err != nil {
-	// 	log.WithError(err).WithFields(wbs.Session.OWI()).Error("SetupPairVeths: cannot enable connection limiting")
-	// 	return nil, status.Errorf(codes.Internal, "cannot enable connection limiting")
-	// }
+	nft, err := exec.LookPath("nft")
+	if err == nil {
+		log.Infof("iws Found nft executable: %v", nft)
+	}
+
+	err = os.WriteFile("iws-file", []byte("iws"), 0644)
+	if err != nil {
+		log.Infof("could not write iws file: %v", err)
+	}
+
+	err = nsinsider(wbs.Session.InstanceID, int(containerPID), func(c *exec.Cmd) {
+		c.Args = append(c.Args, "setup-connection-limit", "--limit", "150")
+	}, enterMountNS(false), enterNetNS(true))
+	if err != nil {
+		log.WithError(err).WithFields(wbs.Session.OWI()).Error("SetupPairVeths: cannot enable connection limiting")
+		return nil, status.Errorf(codes.Internal, "cannot enable connection limiting")
+	}
 
 	return &api.SetupPairVethsResponse{}, nil
 }
@@ -833,6 +843,7 @@ func nsinsider(instanceID string, targetPid int, mod func(*exec.Cmd), opts ...ns
 	}
 	var nss []mnt
 	if cfg.MountNS {
+		log.Info("should not enter mount")
 		tpid := targetPid
 		if cfg.MountNSPid != 0 {
 			tpid = cfg.MountNSPid
@@ -862,6 +873,11 @@ func nsinsider(instanceID string, targetPid int, mod func(*exec.Cmd), opts ...ns
 		defer f.Close()
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%d", ns.Env, stdioFdCount+len(cmd.ExtraFiles)))
 		cmd.ExtraFiles = append(cmd.ExtraFiles, f)
+	}
+
+	nft, err := exec.LookPath("nft")
+	if err == nil {
+		log.Infof("nsinsider Found nft executable: %v", nft)
 	}
 
 	var cmdOut bytes.Buffer

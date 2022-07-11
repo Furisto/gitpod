@@ -83,7 +83,7 @@ var (
 )
 
 // ServeWorkspace establishes the IWS server for a workspace
-func ServeWorkspace(uidmapper *Uidmapper, fsshift api.FSShiftMethod, cgroupMountPoint string) func(ctx context.Context, ws *session.Workspace) error {
+func ServeWorkspace(uidmapper *Uidmapper, fsshift api.FSShiftMethod, cgroupMountPoint string, connectionLimit int64, limitEnabled bool) func(ctx context.Context, ws *session.Workspace) error {
 	return func(ctx context.Context, ws *session.Workspace) (err error) {
 		if _, running := ws.NonPersistentAttrs[session.AttrWorkspaceServer]; running {
 			return nil
@@ -98,6 +98,10 @@ func ServeWorkspace(uidmapper *Uidmapper, fsshift api.FSShiftMethod, cgroupMount
 			Session:          ws,
 			FSShift:          fsshift,
 			CGroupMountPoint: cgroupMountPoint,
+			NetworkLimits: networkLimits{
+				Enabled:              limitEnabled,
+				ConnectionsPerMinute: connectionLimit,
+			},
 		}
 		err = helper.Start()
 		if err != nil {
@@ -132,12 +136,18 @@ func StopServingWorkspace(ctx context.Context, ws *session.Workspace) (err error
 	return nil
 }
 
+type networkLimits struct {
+	Enabled              bool
+	ConnectionsPerMinute int64
+}
+
 // InWorkspaceServiceServer implements the workspace facing backup services
 type InWorkspaceServiceServer struct {
 	Uidmapper        *Uidmapper
 	Session          *session.Workspace
 	FSShift          api.FSShiftMethod
 	CGroupMountPoint string
+	NetworkLimits    networkLimits
 
 	srv  *grpc.Server
 	sckt io.Closer

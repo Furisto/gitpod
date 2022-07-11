@@ -39,6 +39,9 @@ type Config struct {
 
 	// Initializer configures the isolated content initializer runtime
 	Initializer InitializerConfig `json:"initializer"`
+
+	// NetworkLimits specifies the limits imposed upon the network of the workspace
+	NetworkLimits NetworkLimitConfig `json:"networkLimits"`
 }
 
 type BackupConfig struct {
@@ -59,6 +62,11 @@ type UserNamespacesConfig struct {
 }
 
 type FSShiftMethod api.FSShiftMethod
+
+type NetworkLimitConfig struct {
+	Enabled              bool  `json:"enabled"`
+	ConnectionsPerMinute int64 `json:"connectionsPerMinute"`
+}
 
 // MarshalJSON marshals the api.FSShiftMethod to the api.FSShiftMethod_value
 func (m FSShiftMethod) MarshalJSON() ([]byte, error) {

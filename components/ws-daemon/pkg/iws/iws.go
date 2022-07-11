@@ -398,6 +398,16 @@ func (wbs *InWorkspaceServiceServer) SetupPairVeths(ctx context.Context, req *ap
 		return nil, status.Errorf(codes.Internal, "cannot enable IP forwarding")
 	}
 
+	if wbs.NetworkLimits.Enabled {
+		err = nsinsider(wbs.Session.InstanceID, int(containerPID), func(c *exec.Cmd) {
+			c.Args = append(c.Args, "setup-connection-limit", "--limit", strconv.Itoa(int(wbs.NetworkLimits.ConnectionsPerMinute)))
+		}, enterMountNS(false), enterNetNS(true))
+		if err != nil {
+			log.WithError(err).WithFields(wbs.Session.OWI()).Error("SetupPairVeths: cannot enable connection limiting")
+			return nil, status.Errorf(codes.Internal, "cannot enable connection limiting")
+		}
+	}
+
 	return &api.SetupPairVethsResponse{}, nil
 }
 

@@ -50,6 +50,7 @@ func configmap(ctx *common.RenderContext) ([]runtime.Object, error) {
 	networkLimitConfig := content.NetworkLimitConfig{
 		Enabled:              false,
 		ConnectionsPerMinute: 3000,
+		BucketSize:           1000,
 	}
 
 	runtimeMapping := make(map[string]string)
@@ -73,6 +74,7 @@ func configmap(ctx *common.RenderContext) ([]runtime.Object, error) {
 
 		networkLimitConfig.Enabled = ucfg.Workspace.NetworkLimits.Enabled
 		networkLimitConfig.ConnectionsPerMinute = ucfg.Workspace.NetworkLimits.ConnectionsPerMinute
+		networkLimitConfig.BucketSize = ucfg.Workspace.NetworkLimits.BucketSize
 
 		if len(ucfg.Workspace.WSDaemon.Runtime.NodeToContainerMapping) > 0 {
 			// reset map

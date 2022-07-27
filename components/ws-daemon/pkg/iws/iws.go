@@ -83,7 +83,7 @@ var (
 )
 
 // ServeWorkspace establishes the IWS server for a workspace
-func ServeWorkspace(uidmapper *Uidmapper, fsshift api.FSShiftMethod, cgroupMountPoint string, connectionLimit int64, limitEnabled bool) func(ctx context.Context, ws *session.Workspace) error {
+func ServeWorkspace(uidmapper *Uidmapper, fsshift api.FSShiftMethod, cgroupMountPoint string, connectionLimit, bucketsize int64, limitEnabled bool) func(ctx context.Context, ws *session.Workspace) error {
 	return func(ctx context.Context, ws *session.Workspace) (err error) {
 		if _, running := ws.NonPersistentAttrs[session.AttrWorkspaceServer]; running {
 			return nil
@@ -101,6 +101,7 @@ func ServeWorkspace(uidmapper *Uidmapper, fsshift api.FSShiftMethod, cgroupMount
 			NetworkLimits: networkLimits{
 				Enabled:              limitEnabled,
 				ConnectionsPerMinute: connectionLimit,
+				BucketSize:           bucketsize,
 			},
 		}
 		err = helper.Start()
@@ -139,6 +140,7 @@ func StopServingWorkspace(ctx context.Context, ws *session.Workspace) (err error
 type networkLimits struct {
 	Enabled              bool
 	ConnectionsPerMinute int64
+	BucketSize           int64
 }
 
 // InWorkspaceServiceServer implements the workspace facing backup services
@@ -400,7 +402,8 @@ func (wbs *InWorkspaceServiceServer) SetupPairVeths(ctx context.Context, req *ap
 
 	if wbs.NetworkLimits.Enabled {
 		err = nsinsider(wbs.Session.InstanceID, int(containerPID), func(c *exec.Cmd) {
-			c.Args = append(c.Args, "setup-connection-limit", "--limit", strconv.Itoa(int(wbs.NetworkLimits.ConnectionsPerMinute)))
+			c.Args = append(c.Args, "setup-connection-limit", "--limit", strconv.Itoa(int(wbs.NetworkLimits.ConnectionsPerMinute)),
+				"--bucketsize", strconv.Itoa(int(wbs.NetworkLimits.BucketSize)))
 		}, enterMountNS(false), enterNetNS(true))
 		if err != nil {
 			log.WithError(err).WithFields(wbs.Session.OWI()).Error("SetupPairVeths: cannot enable connection limiting")

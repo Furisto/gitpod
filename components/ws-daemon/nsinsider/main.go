@@ -27,6 +27,8 @@ import (
 	"github.com/vishvananda/netlink"
 )
 
+const connection_drop_stats = "connection_drop_stats"
+
 func main() {
 	app := &cli.App{
 		Commands: []*cli.Command{
@@ -486,20 +488,29 @@ func main() {
 						Name:     "limit",
 						Required: true,
 					},
+					&cli.IntFlag{
+						Name:     "bucketsize",
+						Required: false,
+					},
 				},
 				Action: func(c *cli.Context) error {
 					nftcon := nftables.Conn{}
-					limitTable := nftcon.AddTable(&nftables.Table{
+					gitpodTable := nftcon.AddTable(&nftables.Table{
 						Family: nftables.TableFamilyIPv4,
 						Name:   "gitpod",
 					})
 
-					_ = nftcon.AddChain(&nftables.Chain{
-						Table:    limitTable,
+					nftcon.AddChain(&nftables.Chain{
+						Table:    gitpodTable,
 						Name:     "ratelimit",
 						Type:     nftables.ChainTypeFilter,
 						Hooknum:  nftables.ChainHookPostrouting,
 						Priority: nftables.ChainPriorityFilter,
+					})
+
+					nftcon.AddObject(&nftables.CounterObj{
+						Table: gitpodTable,
+						Name:  connection_drop_stats,
 					})
 
 					if err := nftcon.Flush(); err != nil {
@@ -507,7 +518,12 @@ func main() {
 					}
 
 					connLimit := c.Int("limit")
-					return addConnectionLimitRule(connLimit)
+					bucketSize := c.Int("bucketsize")
+					if bucketSize == 0 {
+						bucketSize = 1000
+					}
+
+					return addConnectionLimitRule(connLimit, bucketSize)
 				},
 			},
 		},
@@ -563,13 +579,27 @@ const (
 	flagAtRecursive = 0x8000
 )
 
-func addConnectionLimitRule(limit int) error {
+func addConnectionLimitRule(limit, bucketSize int) error {
+	setName := "connections"
+	set := fmt.Sprintf("add set gitpod %s { type ipv4_addr; flags timeout, dynamic; }", setName)
+	if err := executeNft(set); err != nil {
+		return err
+	}
+
+	rule := fmt.Sprintf("add rule ip gitpod ratelimit ip protocol tcp ct state new add @%s { ip daddr & 0.0.0.0 timeout 1m limit rate over %d/minute burst %d packets } counter name %s drop", setName, limit, bucketSize, connection_drop_stats)
+	if err := executeNft(rule); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func executeNft(args string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	rule := fmt.Sprintf("add rule ip gitpod ratelimit ip protocol tcp ct state new meter connmeter { ip daddr & 0.0.0.0 timeout 1m limit rate over %d/minute } counter drop", limit)
 
 	// the go library does not support meters, so use nft instead
-	cmd := exec.CommandContext(ctx, "/usr/sbin/nft", rule)
+	cmd := exec.CommandContext(ctx, "/usr/sbin/nft", args)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return xerrors.Errorf("run nft failed: %v\n%v", string(output), err)
 	}

@@ -66,6 +66,7 @@ type FSShiftMethod api.FSShiftMethod
 type NetworkLimitConfig struct {
 	Enabled              bool  `json:"enabled"`
 	ConnectionsPerMinute int64 `json:"connectionsPerMinute"`
+	BucketSize           int64 `json:"bucketSize"`
 }
 
 // MarshalJSON marshals the api.FSShiftMethod to the api.FSShiftMethod_value

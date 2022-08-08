@@ -129,14 +129,21 @@ type WorkspaceDefaults struct {
 }
 
 type WorkspaceClass struct {
-	Id          string                 `json:"id"`
-	Category    WorkspaceClassCategory `json:"category"`
-	DisplayName string                 `json:"displayName"`
-	Description string                 `json:"description"`
-	PowerUps    uint32                 `json:"powerups"`
-	IsDefault   bool                   `json:"isDefault"`
-	Deprecated  bool                   `json:"deprecated"`
-	Marker      map[string]bool        `json:"marker,omitempty"`
+	Id          string                  `json:"id"`
+	Category    WorkspaceClassCategory  `json:"category"`
+	DisplayName string                  `json:"displayName"`
+	Description string                  `json:"description"`
+	PowerUps    uint32                  `json:"powerups"`
+	IsDefault   bool                    `json:"isDefault"`
+	Deprecated  bool                    `json:"deprecated"`
+	Marker      map[string]bool         `json:"marker,omitempty"`
+	Resources   WorkspaceClassResources `json:"resources"`
+}
+
+type WorkspaceClassResources struct {
+	Cpu     uint32 `json:"cpu"`
+	Memory  uint32 `json:"memory"`
+	Storage uint32 `json:"storage"`
 }
 
 type NamedWorkspaceFeatureFlag string

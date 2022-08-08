@@ -152,6 +152,7 @@ func configmap(ctx *common.RenderContext) ([]runtime.Object, error) {
 					IsDefault:   cl.IsDefault,
 					Deprecated:  cl.Deprecated,
 					Marker:      cl.Marker,
+					Resources:   WorkspaceClassResources(cl.Resources),
 				}
 
 				workspaceClasses = append(workspaceClasses, class)

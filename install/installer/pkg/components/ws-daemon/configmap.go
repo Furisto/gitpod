@@ -22,6 +22,7 @@ import (
 	"github.com/gitpod-io/gitpod/ws-daemon/pkg/diskguard"
 	"github.com/gitpod-io/gitpod/ws-daemon/pkg/hosts"
 	"github.com/gitpod-io/gitpod/ws-daemon/pkg/iws"
+	"github.com/gitpod-io/gitpod/ws-daemon/pkg/netlimit"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -47,7 +48,7 @@ func configmap(ctx *common.RenderContext) ([]runtime.Object, error) {
 	var ioLimitConfig daemon.IOLimitConfig
 
 	var procLimit int64
-	networkLimitConfig := content.NetworkLimitConfig{
+	networkLimitConfig := netlimit.Config{
 		Enabled:              false,
 		ConnectionsPerMinute: 3000,
 		BucketSize:           1000,
@@ -119,7 +120,6 @@ func configmap(ctx *common.RenderContext) ([]runtime.Object, error) {
 				Initializer: content.InitializerConfig{
 					Command: "/app/content-initializer",
 				},
-				NetworkLimits: networkLimitConfig,
 			},
 			Uidmapper: iws.UidmapperConfig{
 				ProcLocation: "/proc",

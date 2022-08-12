@@ -111,8 +111,8 @@ func NewDaemon(config Config, reg prometheus.Registerer) (*Daemon, error) {
 		cgroupPlugins,
 	}
 
-	if config.Content.NetworkLimits.Enabled {
-		listener = append(listener, netlimit.NewNetworkStatExporter(reg))
+	if config.NetLimit.Enabled {
+		listener = append(listener, netlimit.NewConnLimiter(config.NetLimit, reg))
 	}
 
 	dsptch, err := dispatch.NewDispatch(containerRuntime, clientset, config.Runtime.KubernetesNamespace, nodename, listener...)

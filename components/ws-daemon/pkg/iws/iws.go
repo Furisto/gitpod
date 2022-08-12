@@ -83,7 +83,7 @@ var (
 )
 
 // ServeWorkspace establishes the IWS server for a workspace
-func ServeWorkspace(uidmapper *Uidmapper, fsshift api.FSShiftMethod, cgroupMountPoint string, connectionLimit, bucketsize int64, limitEnabled bool) func(ctx context.Context, ws *session.Workspace) error {
+func ServeWorkspace(uidmapper *Uidmapper, fsshift api.FSShiftMethod, cgroupMountPoint string) func(ctx context.Context, ws *session.Workspace) error {
 	return func(ctx context.Context, ws *session.Workspace) (err error) {
 		if _, running := ws.NonPersistentAttrs[session.AttrWorkspaceServer]; running {
 			return nil
@@ -98,11 +98,6 @@ func ServeWorkspace(uidmapper *Uidmapper, fsshift api.FSShiftMethod, cgroupMount
 			Session:          ws,
 			FSShift:          fsshift,
 			CGroupMountPoint: cgroupMountPoint,
-			NetworkLimits: networkLimits{
-				Enabled:              limitEnabled,
-				ConnectionsPerMinute: connectionLimit,
-				BucketSize:           bucketsize,
-			},
 		}
 		err = helper.Start()
 		if err != nil {
@@ -398,17 +393,6 @@ func (wbs *InWorkspaceServiceServer) SetupPairVeths(ctx context.Context, req *ap
 	if err != nil {
 		log.WithError(err).WithFields(wbs.Session.OWI()).Error("SetupPairVeths: cannot enable IP forwarding")
 		return nil, status.Errorf(codes.Internal, "cannot enable IP forwarding")
-	}
-
-	if wbs.NetworkLimits.Enabled {
-		err = nsinsider(wbs.Session.InstanceID, int(containerPID), func(c *exec.Cmd) {
-			c.Args = append(c.Args, "setup-connection-limit", "--limit", strconv.Itoa(int(wbs.NetworkLimits.ConnectionsPerMinute)),
-				"--bucketsize", strconv.Itoa(int(wbs.NetworkLimits.BucketSize)))
-		}, enterMountNS(false), enterNetNS(true))
-		if err != nil {
-			log.WithError(err).WithFields(wbs.Session.OWI()).Error("SetupPairVeths: cannot enable connection limiting")
-			return nil, status.Errorf(codes.Internal, "cannot enable connection limiting")
-		}
 	}
 
 	return &api.SetupPairVethsResponse{}, nil

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gitpod-io/gitpod/common-go/kubernetes"
@@ -26,6 +27,8 @@ import (
 )
 
 type ConnLimiter struct {
+	workspaces     map[string]bool
+	mu             sync.Mutex
 	droppedBytes   *prometheus.GaugeVec
 	droppedPackets *prometheus.GaugeVec
 	config         Config
@@ -54,52 +57,31 @@ func NewConnLimiter(config Config, prom prometheus.Registerer) *ConnLimiter {
 	return s
 }
 
-func (n *ConnLimiter) WorkspaceAdded(ctx context.Context, ws *dispatch.Workspace) error {
-	_, ok := ws.Pod.Annotations[kubernetes.WorkspaceNetConnLimitAnnotation]
-	if !ok {
-		return nil
-	}
+func (c *ConnLimiter) WorkspaceAdded(ctx context.Context, ws *dispatch.Workspace) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	disp := dispatch.GetFromContext(ctx)
-	if disp == nil {
-		return xerrors.Errorf("no dispatch available")
-	}
-
-	pid, err := disp.Runtime.ContainerPID(context.Background(), ws.ContainerID)
-	if err != nil {
-		return xerrors.Errorf("could not get pid for container %s of workspace %s", ws.ContainerID, ws.WorkspaceID)
-	}
-
-	err = nsinsider(ws.InstanceID, int(pid), func(c *exec.Cmd) {
-		c.Args = append(c.Args, "setup-connection-limit", "--limit", strconv.Itoa(int(n.config.ConnectionsPerMinute)),
-			"--bucketsize", strconv.Itoa(int(n.config.BucketSize)))
-	}, enterMountNS(false), enterNetNS(true))
-	if err != nil {
-		log.WithError(err).WithFields(ws.OWI()).Error("cannot enable connection limiting")
+	if err := c.limitWorkspace(ctx, ws); err != nil {
 		return err
 	}
 
-	go func(*dispatch.Workspace) {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
+	c.workspaces[ws.InstanceID] = true
+	return nil
+}
 
-		for {
-			select {
-			case <-ticker.C:
-				counter, err := n.GetConnectionDropCounter(pid)
-				if err != nil {
-					log.WithError(err).Errorf("could not get connection drop stats for %s", ws.WorkspaceID)
-					continue
-				}
+// WorkspaceUpdated gets called when a workspace is updated
+func (c *ConnLimiter) WorkspaceUpdated(ctx context.Context, ws *dispatch.Workspace) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-				n.droppedBytes.WithLabelValues(ws.WorkspaceID).Set(float64(counter.Bytes))
-				n.droppedPackets.WithLabelValues(ws.WorkspaceID).Set(float64(counter.Packets))
-
-			case <-ctx.Done():
-				return
-			}
+	_, ok := c.workspaces[ws.InstanceID]
+	if !ok {
+		if err := c.limitWorkspace(ctx, ws); err != nil {
+			return err
 		}
-	}(ws)
+
+		c.workspaces[ws.InstanceID] = true
+	}
 
 	return nil
 }
@@ -138,6 +120,57 @@ func (n *ConnLimiter) GetConnectionDropCounter(pid uint64) (*nftables.CounterObj
 	}
 
 	return dropCounter, nil
+}
+
+func (c *ConnLimiter) limitWorkspace(ctx context.Context, ws *dispatch.Workspace) error {
+	log.Info("Received workspace")
+	_, ok := ws.Pod.Annotations[kubernetes.WorkspaceNetConnLimitAnnotation]
+	if !ok {
+		return nil
+	}
+
+	disp := dispatch.GetFromContext(ctx)
+	if disp == nil {
+		return fmt.Errorf("no dispatch available")
+	}
+
+	pid, err := disp.Runtime.ContainerPID(context.Background(), ws.ContainerID)
+	if err != nil {
+		return fmt.Errorf("could not get pid for container %s of workspace %s", ws.ContainerID, ws.WorkspaceID)
+	}
+
+	err = nsinsider(ws.InstanceID, int(pid), func(cmd *exec.Cmd) {
+		cmd.Args = append(cmd.Args, "setup-connection-limit", "--limit", strconv.Itoa(int(c.config.ConnectionsPerMinute)),
+			"--bucketsize", strconv.Itoa(int(c.config.BucketSize)))
+	}, enterMountNS(false), enterNetNS(true))
+	if err != nil {
+		log.WithError(err).WithFields(ws.OWI()).Error("cannot enable connection limiting")
+		return err
+	}
+
+	go func(*dispatch.Workspace) {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				counter, err := c.GetConnectionDropCounter(pid)
+				if err != nil {
+					log.WithError(err).Errorf("could not get connection drop stats for %s", ws.WorkspaceID)
+					continue
+				}
+
+				c.droppedBytes.WithLabelValues(ws.WorkspaceID).Set(float64(counter.Bytes))
+				c.droppedPackets.WithLabelValues(ws.WorkspaceID).Set(float64(counter.Packets))
+
+			case <-ctx.Done():
+				return
+			}
+		}
+	}(ws)
+
+	return nil
 }
 
 type nsinsiderOpts struct {

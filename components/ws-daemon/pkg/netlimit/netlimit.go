@@ -27,8 +27,7 @@ import (
 )
 
 type ConnLimiter struct {
-	workspaces     map[string]bool
-	mu             sync.Mutex
+	mu             sync.RWMutex
 	droppedBytes   *prometheus.GaugeVec
 	droppedPackets *prometheus.GaugeVec
 	config         Config
@@ -58,32 +57,11 @@ func NewConnLimiter(config Config, prom prometheus.Registerer) *ConnLimiter {
 }
 
 func (c *ConnLimiter) WorkspaceAdded(ctx context.Context, ws *dispatch.Workspace) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if err := c.limitWorkspace(ctx, ws); err != nil {
-		return err
-	}
-
-	c.workspaces[ws.InstanceID] = true
-	return nil
+	return c.limitWorkspace(ctx, ws)
 }
 
-// WorkspaceUpdated gets called when a workspace is updated
 func (c *ConnLimiter) WorkspaceUpdated(ctx context.Context, ws *dispatch.Workspace) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	_, ok := c.workspaces[ws.InstanceID]
-	if !ok {
-		if err := c.limitWorkspace(ctx, ws); err != nil {
-			return err
-		}
-
-		c.workspaces[ws.InstanceID] = true
-	}
-
-	return nil
+	return c.limitWorkspace(ctx, ws)
 }
 
 func (n *ConnLimiter) GetConnectionDropCounter(pid uint64) (*nftables.CounterObj, error) {
@@ -123,11 +101,11 @@ func (n *ConnLimiter) GetConnectionDropCounter(pid uint64) (*nftables.CounterObj
 }
 
 func (c *ConnLimiter) limitWorkspace(ctx context.Context, ws *dispatch.Workspace) error {
-	log.Info("Received workspace")
-	_, ok := ws.Pod.Annotations[kubernetes.WorkspaceNetConnLimitAnnotation]
-	if !ok {
+	_, hasAnnotation := ws.Pod.Annotations[kubernetes.WorkspaceNetConnLimitAnnotation]
+	if !hasAnnotation {
 		return nil
 	}
+	log.WithFields(ws.OWI()).Infof("will limit network connections")
 
 	disp := dispatch.GetFromContext(ctx)
 	if disp == nil {

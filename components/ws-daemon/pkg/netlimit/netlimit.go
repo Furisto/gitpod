@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gitpod-io/gitpod/common-go/kubernetes"
@@ -26,6 +27,8 @@ import (
 )
 
 type ConnLimiter struct {
+	mu             sync.RWMutex
+	limited        map[string]bool
 	droppedBytes   *prometheus.GaugeVec
 	droppedPackets *prometheus.GaugeVec
 	config         Config
@@ -55,10 +58,30 @@ func NewConnLimiter(config Config, prom prometheus.Registerer) *ConnLimiter {
 }
 
 func (c *ConnLimiter) WorkspaceAdded(ctx context.Context, ws *dispatch.Workspace) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	_, hasAnnotation := ws.Pod.Annotations[kubernetes.WorkspaceNetConnLimitAnnotation]
+	if !hasAnnotation {
+		return nil
+	}
+
 	return c.limitWorkspace(ctx, ws)
 }
 
 func (c *ConnLimiter) WorkspaceUpdated(ctx context.Context, ws *dispatch.Workspace) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	_, hasAnnotation := ws.Pod.Annotations[kubernetes.WorkspaceNetConnLimitAnnotation]
+	if !hasAnnotation {
+		return nil
+	}
+
+	if _, ok := c.limited[ws.InstanceID]; ok {
+		return nil
+	}
+
 	return c.limitWorkspace(ctx, ws)
 }
 
@@ -99,10 +122,6 @@ func (n *ConnLimiter) GetConnectionDropCounter(pid uint64) (*nftables.CounterObj
 }
 
 func (c *ConnLimiter) limitWorkspace(ctx context.Context, ws *dispatch.Workspace) error {
-	_, hasAnnotation := ws.Pod.Annotations[kubernetes.WorkspaceNetConnLimitAnnotation]
-	if !hasAnnotation {
-		return nil
-	}
 	log.WithFields(ws.OWI()).Infof("will limit network connections")
 
 	disp := dispatch.GetFromContext(ctx)
@@ -123,6 +142,7 @@ func (c *ConnLimiter) limitWorkspace(ctx context.Context, ws *dispatch.Workspace
 		log.WithError(err).WithFields(ws.OWI()).Error("cannot enable connection limiting")
 		return err
 	}
+	c.limited[ws.InstanceID] = true
 
 	go func(*dispatch.Workspace) {
 		ticker := time.NewTicker(30 * time.Second)
@@ -141,6 +161,9 @@ func (c *ConnLimiter) limitWorkspace(ctx context.Context, ws *dispatch.Workspace
 				c.droppedPackets.WithLabelValues(ws.WorkspaceID).Set(float64(counter.Packets))
 
 			case <-ctx.Done():
+				c.mu.Lock()
+				delete(c.limited, ws.InstanceID)
+				c.mu.Unlock()
 				return
 			}
 		}

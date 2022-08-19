@@ -625,6 +625,9 @@ func (m *Manager) createDefiniteWorkspacePod(startContext *startWorkspaceContext
 				}
 			}
 
+		case api.WorkspaceFeatureFlag_WORKSPACE_CONNECTION_LIMITING:
+			annotations[kubernetes.WorkspaceNetConnLimitAnnotation] = "3000"
+
 		default:
 			return nil, xerrors.Errorf("unknown feature flag: %v", feature)
 		}

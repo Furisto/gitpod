@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/gitpod-io/gitpod/common-go/kubernetes"
@@ -27,7 +26,6 @@ import (
 )
 
 type ConnLimiter struct {
-	mu             sync.RWMutex
 	droppedBytes   *prometheus.GaugeVec
 	droppedPackets *prometheus.GaugeVec
 	config         Config
@@ -85,11 +83,11 @@ func (n *ConnLimiter) GetConnectionDropCounter(pid uint64) (*nftables.CounterObj
 
 	counterObject, err := nftconn.GetObject(&nftables.CounterObj{
 		Table: gitpodTable,
-		Name:  "connection_drop_stats",
+		Name:  "ws-connection-drop-stats",
 	})
 
 	if err != nil {
-		return nil, xerrors.Errorf("could not get connection drop counter: %w", err)
+		return nil, xerrors.Errorf("could not get connection drop stats: %w", err)
 	}
 
 	dropCounter, ok := counterObject.(*nftables.CounterObj)
